@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install ruff black pytest pytest-cov
+          pip install numpy pandas faker typer pyarrow python-dotenv
+
+      - name: Lint with ruff
+        run: ruff check .
+
+      - name: Format check with black
+        run: black --check .
+
+      - name: Run tests
+        run: |
+          cd insurance-de-platform
+          pytest data_generator/tests/ -v --cov=data_generator --cov-report=term-missing
+
+  dbt-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dbt
+        run: pip install dbt-snowflake
+      - name: dbt compile (dry run)
+        run: |
+          cd insurance-de-platform/dbt_project
+          dbt compile --profiles-dir . --target ci
+        continue-on-error: true  # Remove once Snowflake creds are wired in CI
