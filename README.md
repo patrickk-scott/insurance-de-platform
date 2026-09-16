@@ -15,7 +15,7 @@ for insurance claims processing, actuarial reserving, and business intelligence.
 
 ## Key Features
 
-- Synthetic insurance data generation with realistic actuarial distributions
+- Synthetic insurance claims data generation with actuarial distributions
   (Poisson claim frequency, lognormal severity, reporting lag, lapse behavior)
 - PySpark silver layer: dedup, SCD2 policy dimension, Parquet partitioning
 - dbt dimensional model: staging → intermediate → marts (core + actuarial)
@@ -90,5 +90,4 @@ terraform apply
 ## Design Decisions
 
 See [`docs/design_decisions.md`](docs/design_decisions.md) for a full writeup of architectural
-tradeoffs — why Spark handles lake processing while dbt handles warehouse modeling, why we chose
-EMR Serverless over Glue, and more.
+tradeoffs.

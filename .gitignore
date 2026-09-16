@@ -61,3 +61,4 @@ htmlcov/
 derby.log
 metastore_db/
 spark-warehouse/
+CLAUDE.md
