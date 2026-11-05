@@ -10,8 +10,15 @@ import pyarrow.parquet as pq
 
 # Columns stored as Parquet DATE (date32) rather than TIMESTAMP, so Snowflake
 # and Spark load them as DATE without a cast.
-DATE_COLUMNS = {"effective_date", "exposure_end_date", "accident_date", "report_date"}
-DATE_COLUMNS |= {"earned_period"}
+DATE_COLUMNS = {
+    "effective_date",
+    "exposure_end_date",
+    "accident_date",
+    "report_date",
+    "closed_date",
+    "transaction_date",
+    "earned_period",
+}
 
 
 def to_arrow(df: pd.DataFrame) -> pa.Table:

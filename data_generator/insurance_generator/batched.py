@@ -7,7 +7,8 @@ giant DataFrame for 2M policies (~100M premium rows), we generate
 premiums to disk, and drop them before the next batch. Peak memory is set by
 batch_size, not by the total row count.
 
-Measured on an Apple Silicon Mac (5 years, ~43 premium rows per policy):
+Measured on an Apple Silicon Mac (5 years, ~43 premium rows per policy,
+before claim transactions were added):
     batch 100k: 2M policies peak 2.3 GB, 4M policies peak 2.4 GB (flat)
     batch 250k: 2M policies peak 5.5 GB, grows with total. The macOS allocator
                 keeps a high-water mark for very large arrays; not a true
@@ -18,7 +19,13 @@ Spark silver job compacts anyway.
 Output layout (Spark discovers the partition columns from the paths):
     <root>/policies/part-00000.parquet
     <root>/claims/accident_year=2021/part-00000-0.parquet
+    <root>/claim_transactions/transaction_year=2021/part-00000-0.parquet
     <root>/premiums/earned_year=2021/part-00000-0.parquet
+    <root>/claims_truth/accident_year=2021/part-00000-0.parquet   (answer key)
+
+claim_transactions is partitioned by transaction_year, not accident_year:
+new activity lands in the newest partition, which is what an incremental
+load wants to read.
 
 Determinism: batch b draws from make_rng(seed, b, stream), so the same seed
 and batch_size always produce the same data. A different batch_size gives a
@@ -30,26 +37,26 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from .claims import generate_claims
 from .config import GeneratorConfig
-from .generators import (
-    STREAM_CLAIMS,
-    STREAM_POLICIES,
-    generate_claims,
-    generate_policies,
-    generate_premiums,
-    make_rng,
-)
+from .dates import STREAM_CLAIMS, STREAM_POLICIES, make_rng
+from .generators import generate_policies, generate_premiums
 from .writer import write_parquet_partitioned
 
-TABLES = ("policies", "claims", "premiums")
+TABLES = ("policies", "claims", "claim_transactions", "premiums", "claims_truth")
 
 
 @dataclass
 class ScaledResult:
     policies: int = 0
-    claims: int = 0
+    claims: int = 0  # reported as of the valuation date
+    claim_transactions: int = 0  # up to the valuation date
     premiums: int = 0
+    claims_truth: int = 0  # all claims incl. IBNR
     batches: int = 0
+    # Keys consumed, including rows hidden by the valuation cut.
+    claim_ids: int = 0
+    transaction_ids: int = 0
 
 
 def generate_scaled(
@@ -87,26 +94,32 @@ def generate_scaled(
             id_offset=result.policies,
             rng=make_rng(cfg.seed, b, STREAM_POLICIES),
         )
-        claims = generate_claims(
+        cs = generate_claims(
             policies,
             cfg,
-            id_offset=result.claims,
+            id_offset=result.claim_ids,
+            txn_id_offset=result.transaction_ids,
             rng=make_rng(cfg.seed, b, STREAM_CLAIMS),
         )
         premiums = generate_premiums(policies, cfg, id_offset=result.premiums)
 
-        write_parquet_partitioned(policies, str(root / "policies"), part)
-        write_parquet_partitioned(claims, str(root / "claims"), part, "accident_year")
-        write_parquet_partitioned(premiums, str(root / "premiums"), part, "earned_year")
-
-        result.policies += len(policies)
-        result.claims += len(claims)
-        result.premiums += len(premiums)
+        out = {
+            "policies": (policies, None),
+            "claims": (cs.claims, "accident_year"),
+            "claim_transactions": (cs.transactions, "transaction_year"),
+            "premiums": (premiums, "earned_year"),
+            "claims_truth": (cs.truth, "accident_year"),
+        }
+        for table, (df, partition_col) in out.items():
+            write_parquet_partitioned(df, str(root / table), part, partition_col)
+            setattr(result, table, getattr(result, table) + len(df))
+        result.claim_ids += cs.n_claim_ids
+        result.transaction_ids += cs.n_txn_ids
         result.batches += 1
         if on_batch:
             on_batch(b + 1, n_batches, result)
 
         # Release this batch before building the next one.
-        del policies, claims, premiums
+        del policies, cs, premiums, out
 
     return result

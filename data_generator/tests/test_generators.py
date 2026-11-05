@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from data_generator.insurance_generator.claims import generate_claims
 from data_generator.insurance_generator.config import GeneratorConfig
 from data_generator.insurance_generator.generators import (
-    generate_claims,
     generate_policies,
     generate_premiums,
 )
@@ -22,10 +22,12 @@ def book():
     """A larger book for invariant and statistical checks."""
     cfg = GeneratorConfig(n_policies=20_000, n_years=5, seed=7)
     policies = generate_policies(cfg)
+    # Claim checks here use the truth table: every claim that occurred,
+    # reported or not. Lifecycle and valuation tests are in test_claims.py.
     return (
         cfg,
         policies,
-        generate_claims(policies, cfg),
+        generate_claims(policies, cfg).truth,
         generate_premiums(policies, cfg),
     )
 
@@ -86,14 +88,15 @@ def test_lapse_rate_matches_config(book):
 
 def test_claims_have_valid_policy_ids(small_cfg):
     policies = generate_policies(small_cfg)
-    claims = generate_claims(policies, small_cfg)
-    assert claims["policy_id"].isin(policies["policy_id"]).all()
+    cs = generate_claims(policies, small_cfg)
+    for df in (cs.claims, cs.truth):
+        assert df["policy_id"].isin(policies["policy_id"]).all()
 
 
-def test_claims_loss_positive(book):
+def test_claims_ultimate_positive(book):
     _, _, claims, _ = book
     assert len(claims) > 0
-    assert (claims["loss_amount"] > 0).all()
+    assert (claims["ultimate_loss"] > 0).all()
 
 
 def test_claims_report_after_accident(book):
@@ -156,7 +159,7 @@ def test_earned_premium_is_pro_rata(book):
 
 
 def test_reproducibility(small_cfg):
-    """Same seed should produce identical policies, claims, and premiums.
+    """Same seed should produce identical output for every table.
 
     created_at is a wall-clock load timestamp, not seeded data, so it is
     excluded from BOTH sides of each comparison.
@@ -164,9 +167,10 @@ def test_reproducibility(small_cfg):
 
     def run():
         policies = generate_policies(small_cfg)
-        claims = generate_claims(policies, small_cfg)
+        cs = generate_claims(policies, small_cfg)
         premiums = generate_premiums(policies, small_cfg)
-        return [df.drop(columns=["created_at"]) for df in (policies, claims, premiums)]
+        tables = (policies, cs.claims, cs.transactions, cs.truth, premiums)
+        return [df.drop(columns=["created_at"]) for df in tables]
 
     for first, second in zip(run(), run()):
         pd.testing.assert_frame_equal(first, second)
