@@ -1,0 +1,13 @@
+# Tool configuration. The project is not an installable package yet;
+# this file only configures pytest (and is where ruff/black config goes later).
+
+[tool.pytest.ini_options]
+# Make `import data_generator` work under bare `pytest`, not only
+# `python -m pytest` (which adds the current directory implicitly).
+pythonpath = ["."]
+testpaths = ["data_generator/tests"]
+# Our own deprecated calls fail the suite (e.g. NumPy datetime unit changes),
+# so they get fixed before a library upgrade turns them into errors.
+filterwarnings = [
+    "error::DeprecationWarning:data_generator.*",
+]
