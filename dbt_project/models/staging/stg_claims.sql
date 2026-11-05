@@ -7,8 +7,8 @@ with source as (
 
 renamed as (
     select
-        claim_id::varchar          as claim_id,
-        policy_id::varchar         as policy_id,
+        claim_id::number           as claim_id,
+        policy_id::number          as policy_id,
         accident_date::date        as accident_date,
         report_date::date          as report_date,
         loss_amount::float         as loss_amount,

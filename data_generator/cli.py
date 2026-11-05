@@ -2,14 +2,18 @@
 CLI for the insurance data generator.
 
 Usage:
-  python -m data_generator.cli generate --policies 10000 --years 5 --output ./data/raw
-  python -m data_generator.cli generate --policies 50000 --years 7 --seed 99
+  python -m data_generator.cli generate --policies 10000 --years 5
+  python -m data_generator.cli generate-scaled --policies 2000000 --batch-size 100000
+
+Note: Typer collapses a single-command app and rejects the subcommand name,
+so keep at least two commands registered.
 """
+
 import time
-from pathlib import Path
 
 import typer
 
+from data_generator.insurance_generator.batched import ScaledResult, generate_scaled
 from data_generator.insurance_generator.config import GeneratorConfig
 from data_generator.insurance_generator.generators import (
     generate_claims,
@@ -24,36 +28,75 @@ app = typer.Typer(help="Insurance synthetic data generator.")
 @app.command()
 def generate(
     policies: int = typer.Option(10_000, "--policies", "-p", help="Number of policies"),
-    years: int = typer.Option(5, "--years", "-y", help="Simulation years"),
+    years: int = typer.Option(5, "--years", "-y", help="Calendar years simulated"),
     seed: int = typer.Option(42, "--seed", help="Random seed for reproducibility"),
     output: str = typer.Option("./data/raw", "--output", "-o", help="Output directory"),
 ):
-    """Generate synthetic insurance policies, claims, and premiums."""
-    cfg = GeneratorConfig(n_policies=policies, n_years=years, seed=seed, output_path=output)
+    """Generate small dev data: one Parquet file per table, built in memory."""
+    cfg = GeneratorConfig(
+        n_policies=policies, n_years=years, seed=seed, output_path=output
+    )
+    typer.echo(f"Generating {policies:,} policies over {years} years (seed={seed})")
+    t0 = time.perf_counter()
 
-    typer.echo(f"🏭  Generating {policies:,} policies over {years} years (seed={seed})...")
-    t0 = time.time()
-
-    typer.echo("  → Policies...")
     policy_df = generate_policies(cfg)
-    path = write_parquet_local(policy_df, output, "policies")
-    typer.echo(f"     ✓ {len(policy_df):,} rows  →  {path}")
-
-    typer.echo("  → Claims...")
     claims_df = generate_claims(policy_df, cfg)
-    path = write_parquet_local(claims_df, output, "claims")
-    typer.echo(f"     ✓ {len(claims_df):,} rows  →  {path}")
-
-    typer.echo("  → Premiums...")
     premiums_df = generate_premiums(policy_df, cfg)
-    path = write_parquet_local(premiums_df, output, "premiums")
-    typer.echo(f"     ✓ {len(premiums_df):,} rows  →  {path}")
 
-    elapsed = time.time() - t0
-    typer.echo(f"\n✅  Done in {elapsed:.1f}s")
-    typer.echo(f"    Policies : {len(policy_df):,}")
-    typer.echo(f"    Claims   : {len(claims_df):,}")
-    typer.echo(f"    Premiums : {len(premiums_df):,}")
+    for name, df in (
+        ("policies", policy_df),
+        ("claims", claims_df),
+        ("premiums", premiums_df),
+    ):
+        path = write_parquet_local(df, output, name)
+        typer.echo(f"  {name:<9} {len(df):>12,} rows  ->  {path}")
+
+    typer.echo(f"Done in {time.perf_counter() - t0:.1f}s")
+
+
+@app.command("generate-scaled")
+def generate_scaled_cmd(
+    policies: int = typer.Option(
+        2_000_000, "--policies", "-p", help="Number of policies"
+    ),
+    years: int = typer.Option(5, "--years", "-y", help="Calendar years simulated"),
+    seed: int = typer.Option(42, "--seed", help="Random seed for reproducibility"),
+    batch_size: int = typer.Option(
+        100_000, "--batch-size", "-b", help="Policies per batch (bounds memory)"
+    ),
+    output: str = typer.Option(
+        "./data/scaled", "--output", "-o", help="Output root directory"
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Replace existing generated tables"
+    ),
+):
+    """Generate large data in batches to Hive-partitioned Parquet."""
+    cfg = GeneratorConfig(
+        n_policies=policies, n_years=years, seed=seed, output_path=output
+    )
+    typer.echo(
+        f"Generating {policies:,} policies over {years} years (seed={seed}), "
+        f"{batch_size:,} per batch -> {output}"
+    )
+    t0 = time.perf_counter()
+
+    def progress(done: int, total: int, r: ScaledResult) -> None:
+        typer.echo(
+            f"  batch {done}/{total}: {r.policies:,} policies, {r.claims:,} claims, "
+            f"{r.premiums:,} premiums ({time.perf_counter() - t0:.1f}s)"
+        )
+
+    try:
+        result = generate_scaled(cfg, output, batch_size, overwrite, progress)
+    except FileExistsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        f"Done in {time.perf_counter() - t0:.1f}s: {result.policies:,} policies, "
+        f"{result.claims:,} claims, {result.premiums:,} premiums"
+    )
 
 
 if __name__ == "__main__":
