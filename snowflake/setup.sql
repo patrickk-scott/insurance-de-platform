@@ -147,6 +147,15 @@ CREATE USER IF NOT EXISTS PIPELINE_SVC
 GRANT ROLE LOADER TO USER PIPELINE_SVC;
 GRANT ROLE TRANSFORMER TO USER PIPELINE_SVC;
 
+-- Secondary roles OFF. New Snowflake users default to
+-- DEFAULT_SECONDARY_ROLES = ('ALL'): every role the user holds is active
+-- alongside the one the session picks. Snowflake checks CREATE privileges
+-- against the primary role only, but INSERT/UPDATE/DELETE against all active
+-- roles, so a session as TRANSFORMER could still write RAW through LOADER.
+-- Found by the loader verification on 2026-11-05. Each session must hold
+-- exactly the role it asked for.
+ALTER USER PIPELINE_SVC SET DEFAULT_SECONDARY_ROLES = ();
+
 
 -- -----------------------------------------------------------------------------
 -- 6. Cost guard: resource monitor (ACCOUNTADMIN only)
