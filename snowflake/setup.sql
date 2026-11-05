@@ -181,6 +181,10 @@ ALTER WAREHOUSE TRANSFORMING_WH SET RESOURCE_MONITOR = INSURANCE_PLATFORM_RM;
 --    INSURANCE_PLATFORM_RM; TRANSFORMER has SELECT on future RAW tables.
 -- -----------------------------------------------------------------------------
 USE ROLE SYSADMIN;
-SHOW WAREHOUSES LIKE '%ING_WH';
+-- Exact names: a pattern like '%ING_WH' also matches Snowflake's own
+-- SNOWFLAKE_LEARNING_WH. Snowsight shows only the last result; run any of
+-- these on its own to see it.
+SHOW WAREHOUSES LIKE 'LOADING_WH';
+SHOW WAREHOUSES LIKE 'TRANSFORMING_WH';
 SHOW GRANTS TO ROLE TRANSFORMER;
 SHOW FUTURE GRANTS IN SCHEMA INSURANCE_PLATFORM.RAW;
