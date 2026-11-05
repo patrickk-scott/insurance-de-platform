@@ -5,9 +5,10 @@
 # Make `import data_generator` work under bare `pytest`, not only
 # `python -m pytest` (which adds the current directory implicitly).
 pythonpath = ["."]
-testpaths = ["data_generator/tests"]
+testpaths = ["data_generator/tests", "loader/tests"]
 # Our own deprecated calls fail the suite (e.g. NumPy datetime unit changes),
 # so they get fixed before a library upgrade turns them into errors.
 filterwarnings = [
     "error::DeprecationWarning:data_generator.*",
+    "error::DeprecationWarning:loader.*",
 ]

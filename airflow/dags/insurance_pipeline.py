@@ -56,8 +56,13 @@ with DAG(
 
     load_snowflake = BashOperator(
         task_id="load_to_snowflake",
-        bash_command="python scripts/load_snowflake.py --source silver",
-        doc_md="COPY INTO Snowflake RAW schema from S3 silver Parquet files.",
+        # Local Parquet via an internal stage for now; switches to the S3
+        # silver layer once the Spark job and storage integration exist.
+        bash_command="python -m loader.snowflake_loader --source data/scaled",
+        doc_md=(
+            "PUT Parquet to a Snowflake internal stage, COPY INTO a __LOAD table, "
+            "check row counts, then atomically SWAP into RAW."
+        ),
     )
 
     dbt_run = BashOperator(
