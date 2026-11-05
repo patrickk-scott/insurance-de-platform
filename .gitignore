@@ -15,6 +15,12 @@ build/
 .env
 *.env.local
 
+# Private keys (Snowflake key-pair auth and similar). Keys belong in
+# ~/.snowflake/keys/, never in the repo; this is a backstop.
+*.p8
+*.pem
+*.key
+
 # Data files (generated — don't commit large data)
 data/
 *.parquet

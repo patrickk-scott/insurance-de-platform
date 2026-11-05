@@ -4,11 +4,12 @@ insurance_platform:
     dev:
       type: snowflake
       account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
-      user: "{{ env_var('SNOWFLAKE_USER') }}"
-      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
-      role: "{{ env_var('SNOWFLAKE_ROLE', 'SYSADMIN') }}"
+      user: "{{ env_var('SNOWFLAKE_USER', 'PIPELINE_SVC') }}"
+      # Key-pair auth (see snowflake/README.md). No passwords in config.
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'TRANSFORMER') }}"
       database: "{{ env_var('SNOWFLAKE_DATABASE', 'INSURANCE_PLATFORM') }}"
-      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'TRANSFORMING_WH') }}"
       schema: staging
       threads: 4
       client_session_keep_alive: false
@@ -20,7 +21,7 @@ insurance_platform:
       password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
       role: TRANSFORMER
       database: INSURANCE_PLATFORM_PROD
-      warehouse: TRANSFORM_WH
+      warehouse: TRANSFORMING_WH
       schema: staging
       threads: 8
       client_session_keep_alive: false
@@ -30,8 +31,8 @@ insurance_platform:
       account: "{{ env_var('SNOWFLAKE_ACCOUNT', 'placeholder') }}"
       user: "{{ env_var('SNOWFLAKE_USER', 'placeholder') }}"
       password: "{{ env_var('SNOWFLAKE_PASSWORD', 'placeholder') }}"
-      role: SYSADMIN
+      role: TRANSFORMER
       database: INSURANCE_PLATFORM_CI
-      warehouse: COMPUTE_WH
+      warehouse: TRANSFORMING_WH
       schema: staging
       threads: 1
