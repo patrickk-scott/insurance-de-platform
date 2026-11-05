@@ -1,186 +1,165 @@
 """
-Core data generators: policies, claims, premiums, exposures.
+Core data generators: policies and premiums. Claims live in claims.py.
+
+Everything here is vectorized with NumPy: no per-row Python loops. The trick
+that makes that possible is "expand by repeat": compute how many child rows
+each parent row needs (policy-years per policy, claims per policy-year, months
+per policy), then np.repeat the parent index and do the per-row math on whole
+arrays at once.
+
+Exposure has ONE source of truth: `active_years` on the policy table. A policy
+is in force from `effective_date` up to (not including) its `active_years`-th
+anniversary, or the end of the simulation, whichever comes first. Claims and
+premiums both derive their window from that, so a lapsed policy stops having
+accidents and stops earning premium on the same day.
 
 Actuarial distributions used:
-- Claim frequency: Poisson(λ)          — number of claims per policy per year
-- Claim severity:  Lognormal(μ, σ)     — loss amount per claim
-- Reporting lag:   Truncated Normal     — months from accident to report date
-- Lapse:           Bernoulli(p)         — annual policy termination
+- Lapse:          Geometric(p)       number of policy years until first non-renewal
+- Earned premium: pro rata by day, one row per policy-month
+
+Keys are integer surrogate keys (int64), not UUID strings. Pass `id_offset`
+to keep keys unique when generating in batches.
 """
-import uuid
-from datetime import date, timedelta
-from typing import Optional
 
 import numpy as np
 import pandas as pd
-from faker import Faker
 
 from .config import GeneratorConfig
+from .dates import (
+    DAYS_PER_YEAR,
+    ONE_DAY,
+    ONE_MONTH,
+    STREAM_POLICIES,
+    anniversary,
+    date_parts,
+    days,
+    group_position,
+    make_rng,
+    months,
+    now_utc,
+    to_pandas_dates,
+)
+
+# ── Policies ────────────────────────────────────────────────────────────────
 
 
-fake = Faker()
-
-
-def generate_policies(cfg: GeneratorConfig) -> pd.DataFrame:
-    """Generate the master policy table."""
-    rng = np.random.default_rng(cfg.seed)
-    Faker.seed(cfg.seed)
-
-    n = cfg.n_policies
-    start_date = date(2019, 1, 1)
-
-    # Random effective dates spread over first 2 years of simulation
-    days_offset = rng.integers(0, 365 * 2, size=n)
-    effective_dates = [start_date + timedelta(days=int(d)) for d in days_offset]
-
-    lobs = rng.choice(
-        cfg.lines_of_business,
-        size=n,
-        p=cfg.lob_weights,
-    )
-    states = rng.choice(cfg.states, size=n)
-
-    # Annual premium: rough by LOB
-    premium_map = {
-        "Auto": (1200, 400),
-        "Homeowners": (1800, 600),
-        "Commercial Property": (8000, 3000),
-        "General Liability": (5000, 2000),
-    }
-    premiums = np.array([
-        max(100, rng.normal(premium_map[lob][0], premium_map[lob][1]))
-        for lob in lobs
-    ])
-
-    policies = pd.DataFrame({
-        "policy_id": [str(uuid.uuid4()) for _ in range(n)],
-        "effective_date": effective_dates,
-        "line_of_business": lobs,
-        "state": states,
-        "annual_premium": premiums.round(2),
-        "policy_holder_id": [str(uuid.uuid4()) for _ in range(n)],
-        "created_at": pd.Timestamp.utcnow(),
-    })
-    return policies
-
-
-def generate_claims(
-    policies: pd.DataFrame,
+def generate_policies(
     cfg: GeneratorConfig,
+    n: int | None = None,
+    id_offset: int = 0,
+    rng: np.random.Generator | None = None,
 ) -> pd.DataFrame:
-    """
-    Generate claims for each policy-year using:
-      - Poisson(λ) for claim count
-      - Lognormal(μ, σ) for each loss amount
-      - Truncated Normal for reporting lag (months)
-    """
-    rng = np.random.default_rng(cfg.seed + 1)
-    rows = []
+    """Generate the policy table, including each policy's exposure window."""
+    n = cfg.n_policies if n is None else n
+    rng = rng or make_rng(cfg.seed, 0, STREAM_POLICIES)
 
-    sim_end = date(2019 + cfg.n_years, 12, 31)
+    sim_start = np.datetime64(cfg.sim_start, "D")
+    sim_end_excl = np.datetime64(cfg.sim_end, "D") + ONE_DAY
+    sim_days = int((sim_end_excl - sim_start).astype(np.int64))
+    writing_years = cfg.writing_years or cfg.n_years
+    writing_days = min(writing_years * DAYS_PER_YEAR, sim_days)
 
-    for _, policy in policies.iterrows():
-        policy_start = policy["effective_date"]
-        policy_end = sim_end
-        current_date = policy_start
-        active = True
+    effective = sim_start + days(rng.integers(0, writing_days, size=n))
 
-        year = 0
-        while active and current_date < policy_end:
-            try:
-                year_end = date(current_date.year + 1, current_date.month, current_date.day)
-            except ValueError:
-                # Feb 29 on non-leap year → use Feb 28
-                year_end = date(current_date.year + 1, current_date.month, 28)
-            year_end = min(year_end, policy_end)
+    lob_idx = rng.choice(len(cfg.lines_of_business), size=n, p=cfg.lob_weights)
+    state_idx = rng.integers(0, len(cfg.states), size=n)
 
-            # Lapse check
-            if rng.random() < cfg.annual_lapse_rate and year > 0:
-                active = False
-                break
+    prem_mean = np.asarray(cfg.lob_premium_mean, dtype=float)[lob_idx]
+    prem_std = np.asarray(cfg.lob_premium_std, dtype=float)[lob_idx]
+    annual_premium = np.maximum(
+        cfg.min_annual_premium, rng.normal(prem_mean, prem_std)
+    ).round(2)
 
-            # Claim frequency: Poisson
-            n_claims = rng.poisson(cfg.claim_frequency_lambda)
+    # Exposure. Year 0 is always written. At each later anniversary the policy
+    # lapses with probability p, so "years until first lapse" is Geometric(p).
+    # The simulation window caps how many years we can observe.
+    year, month, day = date_parts(effective)
+    max_years = cfg.sim_end.year - year + 1
+    if cfg.annual_lapse_rate > 0:
+        years_to_lapse = rng.geometric(cfg.annual_lapse_rate, size=n)
+    else:
+        years_to_lapse = np.full(n, np.iinfo(np.int32).max)
+    active_years = np.minimum(years_to_lapse, max_years)
+    is_lapsed = years_to_lapse < max_years
 
-            for _ in range(n_claims):
-                # Accident date: uniform within policy year
-                span = (year_end - current_date).days
-                if span <= 0:
-                    continue
-                accident_offset = rng.integers(0, span)
-                accident_date = current_date + timedelta(days=int(accident_offset))
+    exposure_end_excl = np.minimum(
+        anniversary(year, month, day, active_years), sim_end_excl
+    )
 
-                # Reporting lag: truncated normal (min 0 days, mean=lag_mean months)
-                lag_days = max(0, int(rng.normal(
-                    cfg.lag_mean * 30, cfg.lag_std * 30
-                )))
-                report_date = accident_date + timedelta(days=lag_days)
+    policy_id = np.arange(id_offset + 1, id_offset + n + 1, dtype=np.int64)
+    return pd.DataFrame(
+        {
+            "policy_id": policy_id,
+            # One holder per policy for now; kept as its own key for the
+            # customer dimension later.
+            "policy_holder_id": policy_id,
+            "effective_date": to_pandas_dates(effective),
+            # Last covered day (inclusive). For in-force policies this is the
+            # simulation end / valuation date.
+            "exposure_end_date": to_pandas_dates(exposure_end_excl - ONE_DAY),
+            "line_of_business": pd.Categorical.from_codes(
+                lob_idx, categories=cfg.lines_of_business
+            ),
+            "state": pd.Categorical.from_codes(state_idx, categories=cfg.states),
+            "annual_premium": annual_premium,
+            "active_years": active_years.astype(np.int16),
+            "is_lapsed": is_lapsed,
+            "created_at": now_utc(),
+        }
+    )
 
-                # Severity: lognormal
-                loss_amount = float(rng.lognormal(
-                    cfg.severity_mean_log, cfg.severity_sigma_log
-                ))
 
-                rows.append({
-                    "claim_id": str(uuid.uuid4()),
-                    "policy_id": policy["policy_id"],
-                    "accident_date": accident_date,
-                    "report_date": report_date,
-                    "loss_amount": round(loss_amount, 2),
-                    "accident_year": accident_date.year,
-                    "line_of_business": policy["line_of_business"],
-                    "state": policy["state"],
-                    "status": rng.choice(
-                        ["Open", "Closed", "Reopened"],
-                        p=[0.30, 0.65, 0.05],
-                    ),
-                    "created_at": pd.Timestamp.utcnow(),
-                })
+def exposure_arrays(policies: pd.DataFrame):
+    """Pull the exposure window out of the policy table as datetime64[D]."""
+    effective = policies["effective_date"].to_numpy().astype("datetime64[D]")
+    end_excl = (
+        policies["exposure_end_date"].to_numpy().astype("datetime64[D]") + ONE_DAY
+    )
+    return effective, end_excl
 
-            current_date = year_end
-            year += 1
 
-    return pd.DataFrame(rows)
+# ── Premiums ────────────────────────────────────────────────────────────────
 
 
 def generate_premiums(
     policies: pd.DataFrame,
     cfg: GeneratorConfig,
+    id_offset: int = 0,
 ) -> pd.DataFrame:
-    """Generate monthly earned premium records per active policy."""
-    rng = np.random.default_rng(cfg.seed + 2)
-    rows = []
+    """Generate monthly earned premium for every in-force policy-month.
 
-    sim_end = date(2019 + cfg.n_years, 12, 31)
+    Earned premium is pro rata by days: annual_premium * days_in_force / 365.
+    Partial first and last months earn partial premium. No randomness here:
+    premium is fully determined by the policy's exposure window.
+    """
+    effective, end_excl = exposure_arrays(policies)
+    annual_premium = policies["annual_premium"].to_numpy()
 
-    for _, policy in policies.iterrows():
-        current = policy["effective_date"].replace(day=1)
-        monthly_premium = round(policy["annual_premium"] / 12, 2)
-        active = True
-        month_count = 0
+    first_month = effective.astype("datetime64[M]")
+    last_month = (end_excl - ONE_DAY).astype("datetime64[M]")
+    n_months = (last_month - first_month).astype(np.int64) + 1
 
-        while active and current <= sim_end:
-            # Lapse modeled as monthly probability
-            monthly_lapse = 1 - (1 - cfg.annual_lapse_rate) ** (1 / 12)
-            if rng.random() < monthly_lapse and month_count > 0:
-                active = False
-                break
+    pm_pol = np.repeat(np.arange(len(policies)), n_months)
+    month = first_month[pm_pol] + months(group_position(n_months))
+    month_start = month.astype("datetime64[D]")
+    month_end_excl = (month + ONE_MONTH).astype("datetime64[D]")
 
-            rows.append({
-                "premium_id": str(uuid.uuid4()),
-                "policy_id": policy["policy_id"],
-                "earned_period": current,
-                "earned_premium": monthly_premium,
-                "line_of_business": policy["line_of_business"],
-                "state": policy["state"],
-                "created_at": pd.Timestamp.utcnow(),
-            })
+    in_force_start = np.maximum(month_start, effective[pm_pol])
+    in_force_end = np.minimum(month_end_excl, end_excl[pm_pol])
+    earned_days = (in_force_end - in_force_start).astype(np.int64)
+    earned = (annual_premium[pm_pol] * earned_days / DAYS_PER_YEAR).round(2)
 
-            # Advance one month
-            if current.month == 12:
-                current = current.replace(year=current.year + 1, month=1)
-            else:
-                current = current.replace(month=current.month + 1)
-            month_count += 1
-
-    return pd.DataFrame(rows)
+    n = len(pm_pol)
+    return pd.DataFrame(
+        {
+            "premium_id": np.arange(id_offset + 1, id_offset + n + 1, dtype=np.int64),
+            "policy_id": policies["policy_id"].to_numpy()[pm_pol],
+            "earned_period": to_pandas_dates(month_start),
+            "earned_year": date_parts(month_start)[0].astype(np.int16),
+            "earned_days": earned_days.astype(np.int16),
+            "earned_premium": earned,
+            "line_of_business": policies["line_of_business"].array.take(pm_pol),
+            "state": policies["state"].array.take(pm_pol),
+            "created_at": now_utc(),
+        }
+    )
