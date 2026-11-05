@@ -43,9 +43,7 @@ def test_keys_unique_across_batches(scaled):
 
 def test_hive_partitions_and_types(scaled):
     root, _ = scaled
-    assert sorted(p.name for p in (root / "claims").iterdir())[0].startswith(
-        "accident_year="
-    )
+    assert min(p.name for p in (root / "claims").iterdir()).startswith("accident_year=")
     assert any((root / "premiums").glob("earned_year=*/part-*.parquet"))
     schema = _read(root, "claims").schema
     assert schema.field("accident_date").type == pa.date32()

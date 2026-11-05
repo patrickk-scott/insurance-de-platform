@@ -30,6 +30,20 @@ from .config import GeneratorConfig
 
 DAYS_PER_YEAR = 365
 
+# Date offsets always carry an explicit unit. NumPy 2.5+ deprecates adding
+# bare integers to datetime64 and will turn it into an error.
+ONE_DAY = np.timedelta64(1, "D")
+ONE_MONTH = np.timedelta64(1, "M")
+
+
+def _days(n: np.ndarray) -> np.ndarray:
+    return np.asarray(n, dtype=np.int64).astype("timedelta64[D]")
+
+
+def _months(n: np.ndarray) -> np.ndarray:
+    return np.asarray(n, dtype=np.int64).astype("timedelta64[M]")
+
+
 # Independent random streams per table, so changing how claims are drawn does
 # not shift the policies that came before it.
 STREAM_POLICIES = 0
@@ -59,8 +73,10 @@ def _is_leap(year: np.ndarray) -> np.ndarray:
 
 def _make_dates(year: np.ndarray, month: np.ndarray, day: np.ndarray) -> np.ndarray:
     """Build a datetime64[D] array from integer year, month, day arrays."""
-    ym = (year - 1970).astype("datetime64[Y]").astype("datetime64[M]") + (month - 1)
-    return ym.astype("datetime64[D]") + (day - 1)
+    ym = (year - 1970).astype("datetime64[Y]").astype("datetime64[M]") + _months(
+        month - 1
+    )
+    return ym.astype("datetime64[D]") + _days(day - 1)
 
 
 def _anniversary(year, month, day, k) -> np.ndarray:
@@ -100,11 +116,11 @@ def generate_policies(
     rng = rng or make_rng(cfg.seed, 0, STREAM_POLICIES)
 
     sim_start = np.datetime64(cfg.sim_start, "D")
-    sim_end_excl = np.datetime64(cfg.sim_end, "D") + 1
+    sim_end_excl = np.datetime64(cfg.sim_end, "D") + ONE_DAY
     sim_days = int((sim_end_excl - sim_start).astype(np.int64))
     writing_days = min(cfg.writing_years * DAYS_PER_YEAR, sim_days)
 
-    effective = sim_start + rng.integers(0, writing_days, size=n)
+    effective = sim_start + _days(rng.integers(0, writing_days, size=n))
 
     lob_idx = rng.choice(len(cfg.lines_of_business), size=n, p=cfg.lob_weights)
     state_idx = rng.integers(0, len(cfg.states), size=n)
@@ -141,7 +157,7 @@ def generate_policies(
             "effective_date": _to_pandas_dates(effective),
             # Last covered day (inclusive). For in-force policies this is the
             # simulation end / valuation date.
-            "exposure_end_date": _to_pandas_dates(exposure_end_excl - 1),
+            "exposure_end_date": _to_pandas_dates(exposure_end_excl - ONE_DAY),
             "line_of_business": pd.Categorical.from_codes(
                 lob_idx, categories=cfg.lines_of_business
             ),
@@ -157,7 +173,9 @@ def generate_policies(
 def _exposure_arrays(policies: pd.DataFrame):
     """Pull the exposure window out of the policy table as datetime64[D]."""
     effective = policies["effective_date"].to_numpy().astype("datetime64[D]")
-    end_excl = policies["exposure_end_date"].to_numpy().astype("datetime64[D]") + 1
+    end_excl = (
+        policies["exposure_end_date"].to_numpy().astype("datetime64[D]") + ONE_DAY
+    )
     return effective, end_excl
 
 
@@ -199,13 +217,11 @@ def generate_claims(
     c_pol = py_pol[c_py]
     n = len(c_py)
 
-    accident = py_start[c_py] + np.floor(rng.random(n) * exposure_days[c_py]).astype(
-        np.int64
-    )
+    accident = py_start[c_py] + _days(np.floor(rng.random(n) * exposure_days[c_py]))
     lag_days = np.maximum(
         0, rng.normal(cfg.lag_mean * 30, cfg.lag_std * 30, size=n)
     ).astype(np.int64)
-    report = accident + lag_days
+    report = accident + _days(lag_days)
     loss = rng.lognormal(cfg.severity_mean_log, cfg.severity_sigma_log, size=n).round(2)
     status_idx = rng.choice(len(cfg.claim_statuses), size=n, p=cfg.claim_status_weights)
 
@@ -245,13 +261,13 @@ def generate_premiums(
     annual_premium = policies["annual_premium"].to_numpy()
 
     first_month = effective.astype("datetime64[M]")
-    last_month = (end_excl - 1).astype("datetime64[M]")
+    last_month = (end_excl - ONE_DAY).astype("datetime64[M]")
     n_months = (last_month - first_month).astype(np.int64) + 1
 
     pm_pol = np.repeat(np.arange(len(policies)), n_months)
-    month = first_month[pm_pol] + _group_position(n_months)
+    month = first_month[pm_pol] + _months(_group_position(n_months))
     month_start = month.astype("datetime64[D]")
-    month_end_excl = (month + 1).astype("datetime64[D]")
+    month_end_excl = (month + ONE_MONTH).astype("datetime64[D]")
 
     in_force_start = np.maximum(month_start, effective[pm_pol])
     in_force_end = np.minimum(month_end_excl, end_excl[pm_pol])

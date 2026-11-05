@@ -5,11 +5,12 @@ Schedule: Daily at 06:00 UTC
 Flow:
   generate_data → spark_bronze_to_silver → load_to_snowflake → dbt_run → dbt_test → quality_gate
 """
+
 from datetime import datetime, timedelta
 
-from airflow import DAG
-from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
+
+from airflow import DAG
 
 default_args = {
     "owner": "data-engineering",
@@ -88,4 +89,11 @@ with DAG(
     )
 
     # Pipeline order
-    generate_data >> spark_silver >> load_snowflake >> dbt_run >> dbt_test >> quality_gate
+    (
+        generate_data
+        >> spark_silver
+        >> load_snowflake
+        >> dbt_run
+        >> dbt_test
+        >> quality_gate
+    )

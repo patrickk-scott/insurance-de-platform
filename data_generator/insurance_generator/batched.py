@@ -26,9 +26,9 @@ different (equally valid) random draw.
 """
 
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from .config import GeneratorConfig
 from .generators import (
