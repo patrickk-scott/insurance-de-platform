@@ -48,13 +48,13 @@ CREATE ROLE IF NOT EXISTS TRANSFORMER
 -- Role hierarchy: SYSADMIN inherits both, so admins can see and manage
 -- everything these roles create. Without this, objects created by a custom
 -- role are invisible to SYSADMIN.
+--
+-- This is also how a human admin gets these roles: ACCOUNTADMIN includes
+-- SYSADMIN, which now includes LOADER and TRANSFORMER, so `USE ROLE LOADER`
+-- works with no per-user grant. (An earlier version granted the roles to
+-- CURRENT_USER() directly; it failed on the trial account and was redundant.)
 GRANT ROLE LOADER TO ROLE SYSADMIN;
 GRANT ROLE TRANSFORMER TO ROLE SYSADMIN;
-
--- Let the human running this script use both roles directly.
-SET current_user_name = CURRENT_USER();
-GRANT ROLE LOADER TO USER IDENTIFIER($current_user_name);
-GRANT ROLE TRANSFORMER TO USER IDENTIFIER($current_user_name);
 
 
 -- -----------------------------------------------------------------------------
