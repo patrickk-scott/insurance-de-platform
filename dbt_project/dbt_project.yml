@@ -31,3 +31,10 @@ models:
       actuarial:
         +materialized: table
         +schema: actuarial
+
+vars:
+  # Incurred development from the last observed age to ultimate. 1.0 assumes
+  # incurred is fully developed by then (measured true value: 1.000, General
+  # Liability 1.004). The paid tail is not a setting: fct_ata_factors derives
+  # it per line as incurred / paid at the last age.
+  incurred_tail_factor: 1.0

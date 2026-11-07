@@ -1,0 +1,48 @@
+version: 2
+
+models:
+  - name: fct_loss_triangle
+    description: >
+      Cumulative paid and incurred loss triangles by line of business and for
+      all lines. One row per observed (accident_year, development_age) cell.
+      Pivot accident_year x development_age for the classic triangle view.
+    columns:
+      - name: measure
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["paid", "incurred"]
+      - name: cumulative_amount
+        data_tests: [not_null]
+
+  - name: fct_ata_factors
+    description: >
+      Volume-weighted age-to-age factors, simple averages for comparison, and
+      cumulative development factors to ultimate including the tail.
+    columns:
+      - name: ata_factor
+        description: Must be > 0 so the exp(sum(ln)) product is defined.
+        data_tests: [not_null]
+      - name: cdf_to_ultimate
+        data_tests: [not_null]
+
+  - name: fct_chain_ladder_reserve
+    description: >
+      Chain ladder ultimate loss, case reserve, IBNR and total unpaid by line
+      of business, method (paid or incurred) and accident year.
+    columns:
+      - name: method
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["paid", "incurred"]
+      - name: ultimate_loss
+        data_tests: [not_null]
+
+  - name: fct_reserve_backtest
+    description: >
+      Chain ladder estimates graded against the generator's true ultimate
+      (claims_truth). The only model allowed to read the answer key.
+    columns:
+      - name: true_ultimate_loss
+        data_tests: [not_null]

@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: int_claim_development
+    description: >
+      Incremental paid and incurred losses per development cell, by line of
+      business plus an 'All lines' total, on a fixed 1..N age axis (zeros
+      where nothing happened). Feeds the loss triangles.
+    columns:
+      - name: line_of_business
+        data_tests: [not_null]
+      - name: measure
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["paid", "incurred"]
+      - name: accident_year
+        data_tests: [not_null]
+      - name: development_age
+        data_tests: [not_null]
+      - name: incremental_amount
+        data_tests: [not_null]
