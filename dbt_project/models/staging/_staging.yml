@@ -1,0 +1,94 @@
+version: 2
+
+# Tests on staging guard the contract with the generator: keys are unique,
+# foreign keys resolve, and categorical columns hold only known values. If the
+# generator changes shape, these fail before any mart is built on bad data.
+
+models:
+  - name: stg_policies
+    description: One row per policy with its exposure window.
+    columns:
+      - name: policy_id
+        data_tests: [unique, not_null]
+      - name: line_of_business
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Auto", "Homeowners", "Commercial Property", "General Liability"]
+      - name: effective_date
+        data_tests: [not_null]
+      - name: exposure_end_date
+        data_tests: [not_null]
+
+  - name: stg_claims
+    description: Claims reported as of the valuation date.
+    columns:
+      - name: claim_id
+        data_tests:
+          - unique
+          - not_null
+          # A reported claim must exist in the answer key.
+          - relationships:
+              arguments:
+                to: ref('stg_claims_truth')
+                field: claim_id
+      - name: policy_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_policies')
+                field: policy_id
+      - name: claim_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["Open", "Closed", "Reopened"]
+      - name: accident_year
+        data_tests: [not_null]
+
+  - name: stg_claim_transactions
+    description: Claim financial events up to the valuation date.
+    columns:
+      - name: transaction_id
+        data_tests: [unique, not_null]
+      - name: claim_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_claims')
+                field: claim_id
+      - name: transaction_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["OPEN", "PAYMENT", "CLOSE", "REOPEN"]
+      - name: paid_amount
+        data_tests: [not_null]
+      - name: case_reserve_change
+        data_tests: [not_null]
+
+  - name: stg_premiums
+    description: Earned premium per policy per month.
+    columns:
+      - name: premium_id
+        data_tests: [unique, not_null]
+      - name: policy_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_policies')
+                field: policy_id
+      - name: earned_premium
+        data_tests: [not_null]
+
+  - name: stg_claims_truth
+    description: Answer key incl. IBNR. Backtest only.
+    columns:
+      - name: claim_id
+        data_tests: [unique, not_null]
+      - name: ultimate_loss
+        data_tests: [not_null]

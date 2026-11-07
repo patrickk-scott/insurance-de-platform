@@ -1,0 +1,31 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Landing zone written by loader/snowflake_loader.py (LOADER role).
+      Full refresh per run, swapped in atomically. Every table carries
+      _SOURCE_FILE and _LOADED_AT lineage columns. TRANSFORMER can read,
+      never write.
+    database: "{{ target.database }}"
+    schema: RAW
+    config:
+      loaded_at_field: _LOADED_AT
+    tables:
+      - name: policies
+        description: One row per policy, with its exposure window.
+      - name: claims
+        description: >
+          Claims reported as of the valuation date. Status and closed_date
+          are as of that date. No amounts: money lives in claim_transactions.
+      - name: claim_transactions
+        description: >
+          Claim financial events (OPEN, PAYMENT, CLOSE, REOPEN) up to the
+          valuation date. Source of both loss development triangles.
+      - name: premiums
+        description: Earned premium, one row per policy per month of exposure.
+      - name: claims_truth
+        description: >
+          Answer key from the generator: every claim including IBNR, with
+          its true ultimate loss. For backtesting the reserve estimate only;
+          a real insurer never has this table.
