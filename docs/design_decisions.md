@@ -1,10 +1,10 @@
 # Design Decisions
 
-## Why Spark *and* dbt? (The most common interview question)
+## Why Spark *and* dbt?
 
 These two tools serve distinct layers with a clean boundary:
 
-- **Spark** operates on raw files in S3 (the data lake). It handles schema enforcement,
+- **Spark** operates on raw files in S3 (the data lake). Handling schema enforcement,
   deduplication, SCD2 slowly-changing-dimension logic on the policy table, and writing
   optimally partitioned Parquet. These are file-level, big-data operations where you
   want distributed execution and don't need a warehouse.
