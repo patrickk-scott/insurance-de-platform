@@ -21,7 +21,7 @@ build/
 *.pem
 *.key
 
-# Data files (generated — don't commit large data)
+# Data files (generated; too large to commit)
 data/
 *.parquet
 *.csv
