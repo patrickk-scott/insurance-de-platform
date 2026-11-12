@@ -16,7 +16,6 @@ pyspark==3.5.1
 
 # ── Snowflake ────────────────────────────────────────────────────────────────
 snowflake-connector-python>=3.10.0
-snowflake-snowpark-python>=1.20.0  # optional: Snowpark for dbt Python models
 
 # ── dbt ──────────────────────────────────────────────────────────────────────
 dbt-core>=1.12,<1.13
