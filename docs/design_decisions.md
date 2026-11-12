@@ -1,9 +1,7 @@
 # Design Decisions
 
 This document records the main choices I made building this platform, the
-alternatives I considered, and why I went the way I did. Where a decision
-came from a measurement, the number is included. Parts marked **(planned)**
-are not built yet; for those, this is the approach I intend to take.
+alternatives I considered, and why I went the way I did.
 
 ## Architecture and tool boundaries
 
